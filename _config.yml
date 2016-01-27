@@ -1,6 +1,6 @@
-name: Your New Jekyll Site
-description: Blogging about stuffs
-meta_description: "Your New Jekyll Site, Blogging about stuffs"
+name: Escalated Privilege
+description: Researching Malware
+meta_description: "Welcome to the Escalated Privilege blog where I focus on the behaviors of malware."
 
 markdown: redcarpet
 highlighter: pygments
@@ -11,5 +11,5 @@ domain_name: 'http://escalatedprivilege.com'
 google_analytics: 'UA-XXXXXXXX-X'
 
 # Details for the RSS feed generator
-url:            'blog url'
-author:         'Your Name'
+url:            'clovercipher.github.com'
+author:         'Correy'
