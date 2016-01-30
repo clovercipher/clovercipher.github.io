@@ -13,3 +13,8 @@ google_analytics: 'UA-XXXXXXXX-X'
 # Details for the RSS feed generator
 url:            'clovercipher.github.com'
 author:         'Clover'
+
+pages_list:
+  About: '/about'
+  Archives: '/archives'
+  
