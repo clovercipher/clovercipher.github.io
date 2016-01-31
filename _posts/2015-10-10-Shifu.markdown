@@ -1,0 +1,140 @@
+---
+layout: post
+title:  "Onsite-Procurement"
+date:   2015-10-10 23:59:00
+categories: Analysis
+---
+
+The Shifu Trojan is a recently discovered malware involved in a number targeted attacks involving the Japanese banking sector. What makes this malware interesting is the techniques employed which are typically attributed to other malware families such as Dridex, Zeus, Conficker as well as some others. The utilization of techniques such as Virtual Machine detection and DGA attributed to other malware make the malware a truly advanced threat. In this post, I will explore and attempt to analyze the malware to gain an understanding of how it operates.  
+
+## Preliminary Analysis
+
+The sample has an md5 hash of b9bc3f1b2aace824482c10ffa422f78b and an embedded timestamp of 'Thu Aug 06 04:56:58 2015'. One of the first artifacts that jumps out during static analysis is a full file path:  
+
+    c:\oil\feet\Seven\Send\Gather\Dividerail.pdb
+
+The file extension indicates the artifact is a result of the compilation process for the binary. While this may not have any relevance to the behavior of the malware, it could serve as an indicator for detection via a mechanism such as Yara.  
+
+![Metadata](https://4.bp.blogspot.com/-zhE3rfkUyKI/VhcuSRobWfI/AAAAAAAAAQk/GgNQJJUK2Og/s1600/ShifuMetadata.png)
+
+Further analysis of the binary produces a few clues in regards to what I can expect during execution.  
+The following functions appear to be revealing as to the capabilities of the binary:  
+
+*   GetActiveValue
+*   IsDebuggerPresent
+*   Sleep
+*   WriteFile
+*   GetStartupInfo
+
+The presence of the above libraries indicate that the malware will likely have the ability to write files to the host but this isn't too surprising when it comes to malicious software. The more interesting functions are 'IsDebuggerPresent', 'Sleep' and 'GetStartupInfo'. To me this indicates that I should expect this malware to attempt to prevent analysis attempts under certain conditions since sleep has the potential to stall execution and IsDebuggerPresent is commonly, although not always, utilized to prevent debugging attempts.  
+
+![Assembly Section](https://1.bp.blogspot.com/-Pro7nM2rQKA/Vhcop4wB7XI/AAAAAAAAAQU/Ysz8wlFt9iY/s1600/isDebuggerPresent.png)
+
+At this point it seems that more information will be derived by simply executing the binary.  
+
+## Virtual Machine Analysis
+
+###Analysis Attempt One
+The first attempt at analysis of this file proves to be unsuccessful when ran in a VMWare Windows XP host as seen in this following SysInternals ProcMon output:  
+
+    Time of Day Process Name    Operation   Path    Result
+    40:11.9    shifu.exe    QueryOpen    C:\sample\pos.exe    PATH NOT FOUND
+    40:11.9    shifu.exe    Process Exit        SUCCESS
+    40:11.9    shifu.exe    Thread Exit        SUCCESS
+    40:11.9    shifu.exe    CloseFile    C:\Documents and Settings\John\Desktop    SUCCESS  
+
+It is worth noting that a number of queries for local files are attempted throughout the time in which the process runs. All of these queries result in the malware being unable to detect the files being queried. The last of these queries is for full path C:\sample\pos.exe which does not exist on the virtual machine. Directly afterwards, the process exits and closes the the original binary from which it originated. It is unclear why this file is once of such importance but it may be related to Virtual Machine or sandbox installations.  
+
+###Analysis Attempt Two 
+The decision is made to remove VMWare Tools from the virtual machine. It could be possible that this and not the lack of pos.exe have caused the previous failure. Hopefully the removal of this component will increase the chance of execution success. Running the malware on a host without VMWare tools however, does not have any effect on the result of the execution. Even though it has been removed, the process still exits after it is unable to find the c:\sample\pos.exe file.  
+
+    Time of Day Process Name    Operation   Path    Result
+    28:05.0 shifu.exe   1152    QueryOpen   C:\sample\pos.exe   PATH NOT FOUND
+    28:05.0 shifu.exe   1152    Thread Exit     SUCCESS
+    28:05.0 shifu.exe   1152    Process Exit        SUCCESS
+    28:05.0 shifu.exe   1152    CloseFile   C:\Documents and Settings\John\My Documents\Downloads   SUCCESS
+
+###Analysis Attempt Three
+This time the decision is made to place a file named pos.exe in the c:\sample\ directory in the hopes that the malware will behave differently. While the associated process does find the file, it still behaves in the same fashion as the previous analysis attempts. This is not unexpected since the presence of this file likely should cause the termination of the shifu.exe process.  
+
+    Time of Day Process Name    Operation   Path    Result
+    32:37.9 shifu.exe   QueryOpen   C:\sample\pos.exe   SUCCESS
+    32:37.9 shifu.exe   Thread Exit     SUCCESS
+    32:37.9 shifu.exe   Process Exit        SUCCESS
+    32:37.9 shifu.exe   CloseFile   C:\Documents and Settings\John\Desktop  SUCCESS
+
+Obviously the use of a virtual machine for analysis is ineffective without some type of additional modifications. Instead of continuing to analyze the malware within a standalone virtual machine, I will attempt to see if any progress can be made with a sandbox/emulator instead.  
+
+## Sandbox Analysis
+
+Executing Shifu in a sandboxed environment finally allows the process to run successfully. Upon execution the malware writes the following files to disk:  
+
+    c:\Documents and Settings\All Users\Application Data\dbd2hff6h8.exe     
+    (793bb01102349f366b37da58ddca26ee)  
+    c:\Documents and Settings\<user>\Local Settings\temp\safari.exe         
+    (953754424360b90e7dcedd74e448c44d)  
+    c:\DOCUME~1\<user>\LOCALS~1\Temp\nss3.dll       
+    (7c87033533235868eccc54c392fa147c)
+    c:\Documents and Settings\<user>\Local Settings\Temporary Internet Files\BMKNKJ8O\shifu.exe  
+
+The last file is executed after it has been written to the Internet Explorer cache folder. This could be a persistence mechanism but is likely an attempt to hide the file from a user who might stumble across the original shifu.exe file. Additionally the following file is written to disk:
+
+    C:\Documents and Settings<user>\Application Data\dli644A.tmp.bat 
+
+The malware appears to perform some other interesting activity which are reminiscent of the previous analysis attempts. Shifu appears to be scanning the host for certain files and directories, all of which are not found. These appear to be more inline with virtual machine detection attempts and even include the c:\sample\pos.exe file that were observed during the virtual machine attempts.  
+
+    c:\analysis   
+    c:\analysis\sandboxstarter.exe  
+    c:\Documents and Settings\All Users\Application Data\dbd2hff6h8.exe    
+    c:\windows\system32\drivers\vboxmouse.sys    
+    c:\windows\system32\drivers\vmhgfs.sys    
+    c:\windows\system32\drivers\vmmouse.sys    
+    c:\insidetm    
+    c:\sample\pos.exe  
+
+Another interesting aspect of the Shifu execution is the interaction with the Windows process Explorer.exe, which is a commonly targeted process for injection by malicious software. The interactions with Explorer.exe include the suspension, reading, writing and resuming of the Explorer process. These are typical actions taken when attempting to inject malicious code in to a process. Once injection has successfully occurred the following files are written to the user's 'Application Data' under a subdirectory:  
+
+    c:\Documents and Settings\<user>\Application Data\7a62af1e\keylog.txt
+    c:\Documents and Settings\<user>\Application Data\7a62af1e\sysinfo.txt  
+    c:\Documents and Settings\<user>\Application Data\7a62af1e\cmdline.txt  
+    c:\Documents and Settings\<user>\Application Data\7a62af1e\1_cert.pfx  
+    c:\Documents and Settings\<user>\Application Data\7a62af1e\1_info.txt  
+
+Another interesting action is observed which appears to be related to Bitcoin:  
+
+    c:\Documents and Settings\<user>bitcoin\wallet.dat 
+
+The final noteworthy action that I notice is an attempt to hide the shifu.exe file which was originally written to the Internet Explorer cache directory. This is done using the Windows executable 'attrib.exe':  
+
+    c:\WINDOWS\system32\attrib.exe attrib -r -s -h "C:\Documents and Settings\<user>\Local Settings\Temporary Internet Files\BMKNKJ8O\shifu.exe"  
+
+###Network Analysis 
+Analyzing the network traffic appears to be a bit more difficult. At first glance it appears that the C2 domain has either been taken down or is being blocked. A DNS request is made for an A record belonging to 'eboduftazce-ru.com' which returns a number of malicious results on VirusTotal.  
+
+![C&C Traffic](https://3.bp.blogspot.com/-bfjNyELI884/VhcvdUdyIeI/AAAAAAAAAQw/NSt9emNcAg0/s1600/C2.png)
+
+####_eboduftazce-ru.com_
+In order to be thorough, a bit of recon is performed on the host.  
+
+    eboduftazce-ru.com. 5 IN SOA dns.bizcn.com. dnsconct.bizcn.com. (
+                1443758308 ; serial
+                28800      ; refresh (8 hours)
+                14400      ; retry (4 hours)
+                14400      ; expire (4 hours)
+                600        ; minimum (10 minutes)
+                )
+    eboduftazce-ru.com. 5 IN NS ns3.cnmsn.com.
+    eboduftazce-ru.com. 5 IN NS ns4.cnmsn.com.
+    eboduftazce-ru.com. 5 IN A  188.42.254.65
+
+The lack of valid DNS response records could indicate the domain is no longer available. This could be a result of a number of factors such as fast flux domain changing or dynamically generated domain names being utilized. At first glance the network traffic does not indicate this is the case considering DGA malware typically generates a great deal of DNS traffic. Even after running the binary a second time the same traffic is observed.  
+
+## Conclusion
+
+The advanced techniques employed by Shifu makes this malware a bit tough to analyze but not impossible. The primary roadblock is the VM detection mechanism which prevented manual dynamic analysis. As a result, sandboxing technologies are employed with great success. While this technique makes analysis difficult, it limits the ability to compromise thin app clients, other virtualized workstations and virtualized servers. This is not a huge loss since there are few client computers which are virtualized but is worth noting.  
+
+**References**
+
+[Virus Total](https://www.virustotal.com/en/file/4881c7d89c2b5e934d4741a653fbdaf87cc5e7571b68c723504069d519d8a737/analysis/)  
+[Dark Reading: New Shifu Banking Trojan An ‘Uber Patchwork’ Of Malware Tools](http://www.darkreading.com/vulnerabilities---threats/new-shifu-banking-trojan-an-uber-patchwork-of-malware-tools/d/d-id/1322039)  
+[Security Weekly: "Shifu" Trojan Targets Japanese Banks](http://www.securityweek.com/shifu-trojan-targets-japanese-banks)
